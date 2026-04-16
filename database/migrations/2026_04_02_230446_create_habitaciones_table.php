@@ -18,7 +18,7 @@ return new class extends Migration
             
             $table->string('Numero', 10);
             $table->string('Piso', 10);
-            $table->integer('IdEstadoHabitacion')->default(1); // 1: Disponible, 2: Ocupada, 3: Mantenimiento
+            $table->integer('IdEstadoHabitacion')->default(1); // 1: Disponible, 2: Ocupada, 4: Mantenimiento, 3: Reservada
             $table->timestamps();
         });
     }

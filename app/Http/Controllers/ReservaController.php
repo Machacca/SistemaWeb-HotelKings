@@ -6,89 +6,118 @@ use App\Models\Reserva;
 use App\Models\DetalleReserva;
 use App\Models\Habitacion;
 use App\Models\Huesped;
+use App\Models\Producto;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class ReservaController extends Controller
 {
-    /**
-     * INDEX: Lista las reservas actuales.
-     */
     public function index()
     {
-        // Traemos la reserva con su huésped y los detalles de las habitaciones
-        $reservas = Reserva::with(['huesped', 'detalles.habitacion'])->get();
-        return view('reservas.index', compact('reservas'));
+        $habitacionesPorPiso = Habitacion::with('tipo')->get()->groupBy('Piso');
+        return view('reservas.index', compact('habitacionesPorPiso'));
     }
 
-    /**
-     * CREATE: Prepara los datos para el formulario de reserva.
-     */
-    public function create()
+    public function create($id)
     {
+        // Cargamos la relación 'tipo' para obtener 'Tarifa_base'
+        $habitacionSeleccionada = Habitacion::with('tipo')->find($id);
+
+        if (!$habitacionSeleccionada) {
+            return redirect()->route('reservas.index')->with('error', 'Habitación no encontrada.');
+        }
+
         $huespedes = Huesped::all();
-        // Solo mostramos habitaciones que estén "Disponibles" (Estado 1)
-        $habitaciones = Habitacion::where('IdEstadoHabitacion', 1)->get();
-        
-        return view('reservas.create', compact('huespedes', 'habitaciones'));
+        $productos = Producto::all(); 
+
+        return view('reservas.create', compact('huespedes', 'habitacionSeleccionada', 'productos'));
     }
 
-    /**
-     * STORE: La lógica más importante del sistema.
-     */
     public function store(Request $request)
     {
+        // 1. Validación
         $request->validate([
             'IdHuesped' => 'required',
             'IdHabitacion' => 'required',
             'FechaEntrada' => 'required|date',
-            'FechaSalida' => 'required|date|after:FechaEntrada',
-            'PrecioNoche' => 'required|numeric'
+            'FechaSalida' => 'required|date|after_or_equal:FechaEntrada',
+            'PrecioNoche' => 'required|numeric',
+            'TipoRegistro' => 'required'
         ]);
 
-        // Iniciamos una transacción: Todo se guarda o nada se guarda
         DB::beginTransaction();
 
         try {
-            // 1. Crear la Reserva (Cabecera)
+            $esReserva = $request->TipoRegistro === 'Reserva';
+
+            // 2. Crear la Reserva (Cabecera)
+            // Nota: Asegúrate que IdCanal e IdHotel tengan valores por defecto o pasarlos aquí
             $reserva = Reserva::create([
+                'IdCanal' => 1, // Valor por defecto o del request
                 'IdHuesped' => $request->IdHuesped,
-                'IdHotel' => 1, 
-                'IdCanal' => 1,
                 'FechaReserva' => now(),
-                'Estado' => 'Activa',
-                'TotalReserva' => 0 
+                'Estado' => $esReserva ? 'Confirmada' : 'En Curso',
+                'TotalReserva' => 0, // Se puede actualizar después del cálculo
             ]);
 
-            // 2. Crear el Detalle de la Reserva
-            DetalleReserva::create([
+            // 3. Crear el Detalle de la Reserva
+            $detalle = DetalleReserva::create([
                 'IdReserva' => $reserva->IdReserva,
                 'IdHabitacion' => $request->IdHabitacion,
-                'FechaEntrada' => $request->FechaEntrada,
-                'FechaSalida' => $request->FechaSalida,
+                'FechaCheckIn' => $request->FechaEntrada,
+                'FechaCheckOut' => $request->FechaSalida,
                 'PrecioNoche' => $request->PrecioNoche,
+                'PagosAdelantados' => $request->Adelanto ?? 0,
             ]);
 
-            // 3. CAMBIAR ESTADO DE HABITACIÓN: De Disponible (1) a Ocupada (2)
+            // 4. Guardar Acompañantes
+            if ($request->has('acompanantes')) {
+                foreach ($request->acompanantes as $acomp) {
+                    if (!empty($acomp['Nombre'])) {
+                        DB::table('acompanantes')->insert([
+                            'IdDetalleReserva' => $detalle->IdDetalle,
+                            'Nombre' => $acomp['Nombre'],
+                            'Apellido' => $acomp['Apellido'],
+                            'TipoDocumento' => 'DNI', // Valor por defecto
+                            'NroDocumento' => $acomp['NroDocumento'],
+                            'created_at' => now(),
+                            'updated_at' => now(),
+                        ]);
+                    }
+                }
+            }
+
+            // 5. Guardar Consumos (Productos)
+            if ($request->has('productos')) {
+                foreach ($request->productos as $prod) {
+                    if (!empty($prod['IdProducto'])) {
+                        DB::table('consumo_reserva')->insert([
+                            'IdReserva' => $reserva->IdReserva,
+                            'IdProducto' => $prod['IdProducto'],
+                            'Cantidad' => $prod['Cantidad'],
+                            'FechaConsumo' => now(),
+                            'EstadoPago' => false,
+                            'created_at' => now(),
+                            'updated_at' => now(),
+                        ]);
+                    }
+                }
+            }
+
+            // 6. Actualizar Estado de la Habitación
+            // 2: Ocupada (Ingreso), 3: Reservada (Reserva)
             $habitacion = Habitacion::find($request->IdHabitacion);
-            $habitacion->IdEstadoHabitacion = 2; 
+            $habitacion->IdEstadoHabitacion = $esReserva ? 3 : 2; 
             $habitacion->save();
 
-            DB::commit(); // Confirmamos los cambios en la DB
-            return redirect()->route('reservas.index')->with('success', '¡Reserva creada y habitación ocupada!');
+            DB::commit();
+            return redirect()->route('reservas.index')->with('success', 'Registro guardado correctamente.');
 
         } catch (\Exception $e) {
-            DB::rollback(); // Si algo falló, deshacemos todo
-            return back()->with('error', 'Error al crear la reserva: ' . $e->getMessage());
+            DB::rollback();
+            return back()->with('error', 'Error al guardar: ' . $e->getMessage())->withInput();
         }
     }
 
-    /**
-     * SHOW: Ver el "Check-out" o resumen de cuenta.
-     */
-    public function show($id)
-    {
-        $reserva = Reserva::with(['huesped', 'detalles.habitacion', 'consumos.producto'])->findOrFail($id);
-        return view('reservas.show', compact('reserva'));
-    }
+
 }

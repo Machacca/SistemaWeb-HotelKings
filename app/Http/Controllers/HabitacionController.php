@@ -58,7 +58,6 @@ class HabitacionController extends Controller
         
         return view('habitaciones.edit', compact('habitacion', 'tipos', 'hoteles'));
     }
-
     /**
      * 5. UPDATE: Procesar los cambios de la edición.
      */
@@ -88,5 +87,24 @@ class HabitacionController extends Controller
         $habitacion->delete();
 
         return redirect()->route('habitaciones.index')->with('success', 'Habitación eliminada.');
+    }
+
+    public function liberar($id)
+    {
+        // 1. Buscamos la habitación
+        $habitacion = Habitacion::find($id);
+
+        if ($habitacion) {
+            // 2. CAMBIO CRÍTICO: Asignar el nuevo valor del estado (1 = Disponible)
+            $habitacion->IdEstadoHabitacion = 1; 
+            
+            // 3. GUARDAR en la base de datos (Si no pones save(), no hace nada)
+            $habitacion->save(); 
+
+            // 4. Retornar con éxito
+            return redirect()->route('reservas.index')->with('success', 'Habitación liberada correctamente.');
+        }
+
+        return redirect()->route('reservas.index')->with('error', 'No se encontró la habitación.');
     }
 }
