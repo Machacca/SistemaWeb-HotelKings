@@ -41,95 +41,97 @@ class ReservaController extends Controller
     
 
     public function store(Request $request)
-    {
-        \Log::info('Datos recibidos:', $request->all());
-        // 1. Validación inicial
-        $rules = [
-            'IdHabitacion' => 'required|exists:habitaciones,IdHabitacion',
-            'FechaCheckIn' => 'required|date',
-            'FechaCheckOut' => 'required|date|after:FechaCheckIn',
-            'PrecioNoche' => 'required|numeric|min:0',
-        ];
+{
+    // 1. Validación
+    $rules = [
+        'IdHabitacion' => 'required|exists:habitaciones,IdHabitacion',
+        'FechaCheckIn' => 'required|date',
+        'FechaCheckOut' => 'required|date|after:FechaCheckIn',
+        'PrecioNoche' => 'required|numeric|min:0',
+    ];
 
-        // Si no se seleccionó un huésped existente, validamos los datos del nuevo
-        if (!$request->filled('IdHuesped')) {
-            $rules['huesped_titular.Nombre'] = 'required|string|max:255';
-            $rules['huesped_titular.Apellido'] = 'required|string|max:255';
-            $rules['huesped_titular.NroDocumento'] = 'required|string|max:20';
-        } else {
-            $rules['IdHuesped'] = 'exists:huespedes,IdHuesped';
+    if (!$request->filled('IdHuesped')) {
+        $rules['huesped_titular.Nombre'] = 'required|string|max:255';
+        $rules['huesped_titular.Apellido'] = 'required|string|max:255';
+        $rules['huesped_titular.NroDocumento'] = 'required|string|max:20';
+    } else {
+        $rules['IdHuesped'] = 'exists:huespedes,IdHuesped';
+    }
+
+    $request->validate($rules);
+
+    DB::beginTransaction();
+    try {
+        // 2. Huésped Titular
+        $idHuesped = $request->IdHuesped;
+        
+        if (!$idHuesped && $request->has('huesped_titular')) {
+            $huesped = Huesped::create($request->huesped_titular);
+            $idHuesped = $huesped->IdHuesped;
         }
 
-        $request->validate($rules);
+        // 3. Crear Reserva
+        $reserva = Reserva::create([
+            'IdHuesped' => $idHuesped,
+            'IdHotel' => 1,
+            'IdCanal' => 1,
+            'FechaReserva' => now(),
+            'Estado' => 'Activa',
+            'TotalReserva' => 0
+        ]);
 
-        DB::beginTransaction();
-        try {
-            // 2. Lógica del Huésped Titular
-            $idHuesped = $request->IdHuesped;
-            
-            if (!$idHuesped && $request->filled('huesped_titular.Nombre')) {
-                $huesped = Huesped::create([
-                    'Nombre' => $request->input('huesped_titular.Nombre'),
-                    'Apellido' => $request->input('huesped_titular.Apellido'),
-                    'TipoDocumento' => $request->input('huesped_titular.TipoDocumento'),
-                    'NroDocumento' => $request->input('huesped_titular.NroDocumento'),
-                ]);
-                $idHuesped = $huesped->IdHuesped;
-            }
+        // 4. Crear Detalle (¡IMPORTANTE! Guardar la referencia)
+        $detalle = DetalleReserva::create([
+            'IdReserva' => $reserva->IdReserva,
+            'IdHabitacion' => $request->IdHabitacion,
+            'FechaCheckIn' => $request->FechaCheckIn,
+            'FechaCheckOut' => $request->FechaCheckOut,
+            'PrecioNoche' => $request->PrecioNoche,
+        ]);
 
-            // 3. Crear Reserva
-            $reserva = Reserva::create([
-                'IdHuesped' => $idHuesped,
-                'IdHotel' => 1, // O dinámico
-                'IdCanal' => 1,
-                'FechaReserva' => now(),
-                'Estado' => 'Activa',
-                'TotalReserva' => 0
-            ]);
+        // 5. Calcular Total
+        $fechaInicio = Carbon::parse($detalle->FechaCheckIn);
+        $fechaFin = Carbon::parse($detalle->FechaCheckOut);
+        $noches = $fechaInicio->diffInDays($fechaFin);
+        $reserva->TotalReserva = $detalle->PrecioNoche * $noches;
+        $reserva->save();
 
-            // 4. Crear Detalle y Calcular Total
-            $detalle = DetalleReserva::create([
-                'IdReserva' => $reserva->IdReserva,
-                'IdHabitacion' => $request->IdHabitacion,
-                'FechaCheckIn' => $request->FechaCheckIn,
-                'FechaCheckOut' => $request->FechaCheckOut,
-                'PrecioNoche' => $request->PrecioNoche,
-            ]);
+        // 6. Cambiar estado habitación
+        Habitacion::find($request->IdHabitacion)->update(['IdEstadoHabitacion' => 2]);
 
-            $fechaInicio = Carbon::parse($detalle->FechaCheckIn);
-            $fechaFin = Carbon::parse($detalle->FechaCheckOut);
-            $noches = $fechaInicio->diffInDays($fechaFin);
-            $reserva->TotalReserva = $detalle->PrecioNoche * $noches;
-            $reserva->save();
-
-            // 5. Cambiar estado de habitación
-            Habitacion::find($request->IdHabitacion)->update(['IdEstadoHabitacion' => 2]);
-
-            // 6. Guardar Acompañantes (La parte "Excel")
-            if ($request->has('acompanantes') && is_array($request->acompanantes)) {
-                foreach ($request->acompanantes as $data) {
-                    if (!empty($data['Nombre'])) { // Solo guardar si tiene nombre
-                        Acompanante::create([
-                            'IdReserva' => $reserva->IdReserva,
-                            'Nombre' => $data['Nombre'],
-                            'TipoDocumento' => $data['TipoDocumento'] ?? 'DNI',
-                            'NroDocumento' => $data['NroDocumento'] ?? null,
-                        ]);
-                    }
+        // 7. Guardar Acompañantes - CORREGIDO
+        if ($request->has('acompanantes') && is_array($request->acompanantes)) {
+            foreach ($request->acompanantes as $data) {
+                // Solo si tiene nombre
+                if (!empty($data['Nombre'])) { 
+                    
+                    // Si no tiene documento, usar string vacío para evitar error SQL
+                    $nroDocumento = !empty($data['NroDocumento']) ? $data['NroDocumento'] : '';
+                    
+                    Acompanante::create([
+                        'IdDetalleReserva' => $detalle->IdDetalle, // ← USAR IdDetalleReserva, no IdReserva
+                        'Nombre' => $data['Nombre'],
+                        'Apellido' => $data['Apellido'] ?? '',
+                        'TipoDocumento' => $data['TipoDocumento'] ?? 'DNI',
+                        'NroDocumento' => $nroDocumento,
+                        'Parentesco' => $data['Parentesco'] ?? null,
+                    ]);
                 }
             }
-
-            DB::commit();
-
-            return redirect()->route('reservas.show', $reserva->IdReserva)
-                        ->with('success', "Reserva creada exitosamente. Huéspedes registrados: " . (count($request->acompanantes ?? []) + 1));
-
-        } catch (\Exception $e) {
-            DB::rollback();
-            return back()->with('error', 'Error al procesar la reserva: ' . $e->getMessage())->withInput();
         }
+
+        DB::commit();
+
+        return redirect()->route('reservas.show', $reserva->IdReserva)
+                    ->with('success', "Reserva creada exitosamente. Total: S/ {$reserva->TotalReserva}");
+
+    } catch (\Exception $e) {
+        DB::rollback();
+        \Log::error('Error en store:', ['message' => $e->getMessage()]);
+        return back()->with('error', 'Error al procesar la reserva: ' . $e->getMessage())->withInput();
     }
-    
+}
+
     public function show($id)
     {
         $reserva = Reserva::with(['huesped', 'detalles.habitacion', 'consumos.producto', 'acompanantes'])
@@ -232,16 +234,25 @@ class ReservaController extends Controller
             }
             
             if ($request->has('acompanantes')) {
-                Acompanante::where('IdReserva', $reserva->IdReserva)->delete();
+                Acompanante::whereHas('detalleReserva', function($q) use ($reserva) {
+                    $q->where('IdReserva', $reserva->IdReserva);
+                })->delete();
                 
-                foreach ($request->acompanantes as $acompananteData) {
-                    if (!empty($acompananteData['Nombre'])) {
-                        Acompanante::create([
-                            'IdReserva' => $reserva->IdReserva,
-                            'Nombre' => $acompananteData['Nombre'],
-                            'TipoDocumento' => $acompananteData['TipoDocumento'] ?? 'DNI',
-                            'NroDocumento' => $acompananteData['NroDocumento'] ?? ''
-                        ]);
+                // Obtener el primer detalle (o el que corresponda)
+                $detalle = $reserva->detalles->first();
+                
+                if ($detalle) {
+                    foreach ($request->acompanantes as $acompananteData) {
+                        if (!empty($acompananteData['Nombre'])) {
+                            Acompanante::create([
+                                'IdDetalleReserva' => $detalle->IdDetalle, // ← CORREGIDO
+                                'Nombre' => $acompananteData['Nombre'],
+                                'Apellido' => $acompananteData['Apellido'] ?? '',
+                                'TipoDocumento' => $acompananteData['TipoDocumento'] ?? 'DNI',
+                                'NroDocumento' => !empty($acompananteData['NroDocumento']) ? $acompananteData['NroDocumento'] : '',
+                                'Parentesco' => $acompananteData['Parentesco'] ?? null,
+                            ]);
+                        }
                     }
                 }
             }

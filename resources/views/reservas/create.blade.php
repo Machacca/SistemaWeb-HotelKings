@@ -232,7 +232,7 @@
                         <option value="Pasaporte">PAS</option>
                     </select>
                 </td>
-                <td class="px-2 py-2"><input type="text" name="acompanantes[][NroDocumento]" placeholder="N° Doc" class="w-full bg-transparent focus:outline-none focus:ring-1 focus:ring-gold rounded px-1 py-1 border border-transparent focus:border-gold"></td>
+                <td class="px-2 py-2"><input type="text" name="acompanantes[][NroDocumento]" placeholder="N° Doc" required  class="w-full bg-transparent focus:outline-none focus:ring-1 focus:ring-gold rounded px-1 py-1 border border-transparent focus:border-gold"></td>
                 <td class="px-4 py-2 text-center">
                     <button type="button" onclick="this.closest('tr').remove()" class="text-red-400 hover:text-red-600">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
