@@ -1,4 +1,5 @@
 <?php
+// app/Models/Huesped.php
 
 namespace App\Models;
 
@@ -8,10 +9,25 @@ class Huesped extends Model
 {
     protected $table = 'huespedes';
     protected $primaryKey = 'IdHuesped';
-    protected $fillable = ['Nombre', 'Apellido', 'TipoDocumento', 'NroDocumento', 'Email', 'Telefono', 'Nacionalidad'];
-
+    public $timestamps = true;
+    
+    protected $fillable = [
+        'Nombre',
+        'Apellido',
+        'TipoDocumento',
+        'NroDocumento',
+        'Email',
+        'Telefono',
+        'Nacionalidad'
+    ];
+    
     public function reservas()
     {
         return $this->hasMany(Reserva::class, 'IdHuesped', 'IdHuesped');
+    }
+    
+    public function getNombreCompletoAttribute()
+    {
+        return "{$this->Nombre} {$this->Apellido}";
     }
 }
