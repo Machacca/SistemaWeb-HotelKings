@@ -1,0 +1,28 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+
+    public function up(): void
+    {
+        Schema::create('auditoria', function (Blueprint $table) {
+            $table->id('IdLog');
+            $table->foreignId('IdUsuario')->constrained('usuarios', 'IdUsuario');
+            
+            $table->string('Accion', 100); 
+            $table->string('TablaAfectada', 100);
+            $table->dateTime('FechaHora');
+            $table->string('IP', 100)->nullable();
+            $table->timestamps();
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('auditoria');
+    }
+};
